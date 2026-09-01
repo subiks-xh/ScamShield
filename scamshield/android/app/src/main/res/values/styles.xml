@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ScamShield Launch Theme — Navy background -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@color/scamshield_navy</item>
+        <item name="android:statusBarColor">@color/scamshield_navy</item>
+        <item name="android:navigationBarColor">@color/scamshield_navy</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:statusBarColor">@color/scamshield_navy</item>
+        <item name="android:navigationBarColor">@color/scamshield_navy</item>
+    </style>
+</resources>

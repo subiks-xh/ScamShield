@@ -1,0 +1,26 @@
+{
+  "name": "ScamShield — AI Scam Call Detector",
+  "short_name": "ScamShield",
+  "description": "Detect AI voice-cloning scam calls in real time",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B1D3A",
+  "theme_color": "#0B1D3A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/shield-icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/shield-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "security"],
+  "screenshots": []
+}

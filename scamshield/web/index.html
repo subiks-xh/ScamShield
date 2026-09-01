@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="description" content="ScamShield — AI voice-cloning scam call detector. Protect yourself and your family from AI-generated scam calls in real time.">
+  <meta name="theme-color" content="#0B1D3A">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ScamShield">
+
+  <title>ScamShield — AI Scam Call Detector</title>
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0B1D3A;
+      color: #F8F5EF;
+      font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    /* Splash screen */
+    #splash {
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(160deg, #0B1D3A 0%, #0a1830 50%, #0B1D3A 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.5s ease;
+    }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+    #splash-title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #F8F5EF;
+      margin: 16px 0 4px;
+      font-family: Georgia, serif;
+    }
+    #splash-sub { color: #C9A227; font-size: 0.9rem; }
+    #splash-loader {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #1e3a6e;
+      border-top-color: #C9A227;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-top: 32px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Shield SVG */
+    .splash-shield { opacity: 0.6; }
+  </style>
+</head>
+<body>
+  <!-- Splash screen -->
+  <div id="splash">
+    <svg class="splash-shield" width="80" height="96" viewBox="0 0 100 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M 50 8 C 50 8, 85 14, 90 18 L 90 55 C 90 82, 70 100, 50 112 C 30 100, 10 82, 10 55 L 10 18 C 15 14, 50 8, 50 8 Z" stroke="#C9A227" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+      <circle cx="50" cy="8" r="3" fill="#C9A227"/>
+    </svg>
+    <div id="splash-title">ScamShield</div>
+    <div id="splash-sub">AI scam call detector</div>
+    <div id="splash-loader"></div>
+  </div>
+
+  <script>
+    // Remove splash when Flutter is ready
+    window.addEventListener('flutter-first-frame', () => {
+      const splash = document.getElementById('splash');
+      if (splash) {
+        splash.classList.add('hidden');
+        setTimeout(() => splash.remove(), 500);
+      }
+    });
+  </script>
+
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

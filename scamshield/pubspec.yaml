@@ -1,0 +1,80 @@
+name: scamshield
+description: ScamShield — AI voice-cloning scam call detector
+version: 2.0.0+2
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Navigation
+  go_router: ^13.2.0
+
+  # State management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+
+  # Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  shared_preferences: ^2.2.2
+
+  # Audio
+  record: ^5.1.2
+  audioplayers: ^6.0.0
+
+  # HTTP
+  http: ^1.2.0
+  dio: ^5.4.0
+
+  # UI
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
+  lottie: ^3.0.0
+
+  # Text-to-speech
+  flutter_tts: ^4.0.2
+
+  # Share
+  share_plus: ^9.0.0
+
+  # Permissions
+  permission_handler: ^11.3.0
+
+  # Path
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.8
+  hive_generator: ^2.0.1
+  riverpod_generator: ^2.3.9
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/audio/
+    - assets/images/
+
+  fonts:
+    - family: Fraunces
+      fonts:
+        - asset: assets/fonts/Fraunces-Regular.ttf
+        - asset: assets/fonts/Fraunces-Bold.ttf
+          weight: 700
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope-Regular.ttf
+        - asset: assets/fonts/Manrope-Bold.ttf
+          weight: 700
+    - family: IBMPlexMono
+      fonts:
+        - asset: assets/fonts/IBMPlexMono-Regular.ttf
+        - asset: assets/fonts/IBMPlexMono-Bold.ttf
+          weight: 700
