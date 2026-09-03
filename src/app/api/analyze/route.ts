@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
     const contactName = formData.get("contact_name") as string | null;
     const isDemo = formData.get("is_demo") as string | null;
 
-    const PYTHON_BACKEND = process.env.PYTHON_BACKEND_URL || "http://localhost:8000";
+    const PYTHON_BACKEND = process.env.PYTHON_BACKEND_URL || "http://127.0.0.1:8000";
 
     // Try to forward to Python backend first
     try {
@@ -154,21 +154,30 @@ export async function POST(req: NextRequest) {
           console.error("DB insert failed:", dbErr);
         }
 
-        return NextResponse.json({ ...data, id });
+        return NextResponse.json({ ...data, id, engine_source: "Python AI Engine" });
+      } else {
+        const errText = await backendRes.text();
+        throw new Error(`Python backend returned ${backendRes.status}: ${errText}`);
       }
     } catch (backendErr: unknown) {
       const msg = backendErr instanceof Error ? backendErr.message : String(backendErr);
-      console.log(`Python backend unavailable (${msg}), using built-in analysis`);
+      console.log(`Python backend unavailable (${msg})`);
+      
+      // If it's not a demo, we should NOT silently fall back to the built-in mock engine.
+      if (isDemo !== "true") {
+        return NextResponse.json({ error: `Python AI Engine is unavailable: ${msg}` }, { status: 503 });
+      }
+      console.log("Using built-in analysis for demo mode");
     }
 
-    // ── Built-in fallback analysis ──────────────────────────────────────────
+    // ── Built-in fallback analysis (ONLY for demo) ──────────────────────────────────────────
     const fileBytes = file ? await file.arrayBuffer() : null;
     const fileSize = fileBytes?.byteLength ?? 0;
 
     // For demo or small files, use the sample transcript
     const useDemo = isDemo === "true" || fileSize < 1000;
 
-    const transcript = useDemo ? SAMPLE_TRANSCRIPT : SAMPLE_TRANSCRIPT;
+    const transcript = SAMPLE_TRANSCRIPT;
     const voice = voiceHeuristic();
     const content = contentRiskScore(transcript);
 
@@ -195,12 +204,11 @@ export async function POST(req: NextRequest) {
     } catch (dbErr) {
       console.error("DB insert failed:", dbErr);
     }
-
     return NextResponse.json({
       id,
       transcript,
       language_detected: "en",
-      transcription_method: useDemo ? "demo_mock" : "nextjs_fallback",
+      transcription_method: "demo_mock",
       voice_authenticity_score: voiceScore,
       voice_check_method: voice.method,
       content_risk_score: content.score,
@@ -209,7 +217,8 @@ export async function POST(req: NextRequest) {
       voice_match_score: null,
       contact_name: contactName,
       caller_number: callerNumber,
-      note: "Analysis performed by built-in Next.js engine. For real Whisper transcription and librosa voice analysis, start the Python backend (see README).",
+      engine_source: "Built-in Mock Engine",
+      note: "Analysis performed by built-in Next.js engine.",
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

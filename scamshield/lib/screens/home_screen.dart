@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -36,6 +37,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _contactController = TextEditingController();
   bool _showAdvanced = false;
   Map<String, dynamic>? _numberCheckResult;
+  String? _detectedIncomingCall;
+  String _audioQualityMessage = '';
+
+  static const _platform = MethodChannel('com.example.scamshield/call_screening');
 
   bool get simpleMode => prefs.getBool('simpleMode') ?? false;
 
@@ -45,6 +50,22 @@ class _HomeScreenState extends State<HomeScreen> {
     final weekAgo = DateTime.now().subtract(const Duration(days: 7));
     final thisWeek = box.values.where((r) => r.createdAt.isAfter(weekAgo)).toList();
     return (thisWeek.length, thisWeek.where((r) => r.verdict == 'high_risk').length);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _platform.setMethodCallHandler((call) async {
+      if (call.method == "onIncomingCall") {
+        final phoneNumber = call.arguments as String?;
+        if (phoneNumber != null && phoneNumber.isNotEmpty) {
+          setState(() {
+            _detectedIncomingCall = phoneNumber;
+            _callerController.text = phoneNumber;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -84,7 +105,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-    await _recorder.start(const RecordConfig(), path: path);
+    await _recorder.start(
+      const RecordConfig(
+        encoder: AudioEncoder.aacLc,
+        bitRate: 128000,
+        sampleRate: 44100,
+      ), 
+      path: path
+    );
     _recordingPath = path;
 
     setState(() {
@@ -101,7 +129,16 @@ class _HomeScreenState extends State<HomeScreen> {
       final amp = await _recorder.getAmplitude();
       if (mounted) {
         final normalised = ((amp.current + 60) / 60).clamp(0.0, 1.0);
-        setState(() => _amplitude = normalised);
+        setState(() {
+          _amplitude = normalised;
+          if (normalised < 0.05) {
+            _audioQualityMessage = "The recording is too quiet to analyze reliably";
+          } else if (normalised > 0.8) {
+            _audioQualityMessage = "There is too much background noise";
+          } else {
+            _audioQualityMessage = "Audio quality is good";
+          }
+        });
       }
     });
   }
@@ -109,7 +146,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _stopRecording() async {
     _timer?.cancel();
     _amplitudeTimer?.cancel();
-    setState(() => _amplitude = 0);
+    setState(() {
+      _amplitude = 0;
+      _audioQualityMessage = '';
+    });
     await _recorder.stop();
     if (_recordingPath != null) {
       await _submitAudio(File(_recordingPath!), isDemo: false);
@@ -229,6 +269,38 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 16),
               ],
 
+              // Incoming call alert
+              if (_detectedIncomingCall != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.royalNavy.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.antiqueGold),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Incoming Call Detected',
+                        style: AppTypography.heading2(context, color: AppColors.antiqueGold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _detectedIncomingCall!,
+                        style: AppTypography.heading1(context, color: AppColors.ivory),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'ScamShield can detect when a call arrives using Android’s call-screening system. Android does not give third-party apps direct access to cellular call audio. To analyze sound, tap Record and place the phone near the conversation or use speaker mode, where legally permitted.',
+                        style: AppTypography.label(context, color: AppColors.textMuted),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
               // Caller number input
               if (!simpleMode) ...[
                 TextField(
@@ -317,9 +389,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
                           // Status
                           if (isRecording)
-                            Text(
-                              '● Recording ${_recordingSeconds}s',
-                              style: AppTypography.body(context, color: AppColors.crimsonLight),
+                            Column(
+                              children: [
+                                Text(
+                                  '● Recording ${_recordingSeconds}s',
+                                  style: AppTypography.body(context, color: AppColors.crimsonLight),
+                                ),
+                                if (_audioQualityMessage.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: Text(
+                                      _audioQualityMessage,
+                                      style: AppTypography.label(
+                                        context, 
+                                        color: _audioQualityMessage.contains('good') ? Colors.greenAccent : Colors.orangeAccent
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             )
                           else if (isAnalyzing)
                             Row(

@@ -12,6 +12,30 @@ import type { AnalysisResult } from "@/types";
 
 type RecordState = "idle" | "recording" | "analyzing" | "error";
 
+type SpeechRecognitionEventLike = Event & {
+  results: SpeechRecognitionResultList;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
+
 export default function HomePage() {
   const router = useRouter();
   const { settings, setCurrentResult, addToHistory, protectedContacts } = useAppStore();
@@ -24,6 +48,10 @@ export default function HomePage() {
   const [callerNumber, setCallerNumber] = useState("");
   const [contactName, setContactName] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [audioQualityMessage, setAudioQualityMessage] = useState("");
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [liveTranscriptStatus, setLiveTranscriptStatus] = useState("Not started");
+  const [liveRiskScore, setLiveRiskScore] = useState(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -31,6 +59,7 @@ export default function HomePage() {
   const animFrameRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -38,6 +67,7 @@ export default function HomePage() {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (wsRef.current) wsRef.current.close();
     };
   }, []);
 
@@ -51,10 +81,26 @@ export default function HomePage() {
       analyserRef.current = analyser;
 
       const data = new Uint8Array(analyser.frequencyBinCount);
+      let lastMessageTime = 0;
+      
       function tick() {
         analyser.getByteFrequencyData(data);
         const avg = data.reduce((a, b) => a + b, 0) / data.length;
-        setAmplitude(avg / 128);
+        const normalizedAmp = avg / 128;
+        setAmplitude(normalizedAmp);
+        
+        const now = Date.now();
+        if (now - lastMessageTime > 1500) {
+            if (normalizedAmp < 0.05) {
+                setAudioQualityMessage("The recording is too quiet to analyze reliably");
+            } else if (normalizedAmp > 0.8) {
+                setAudioQualityMessage("There is too much background noise or it's too loud");
+            } else {
+                setAudioQualityMessage("Audio quality is good");
+            }
+            lastMessageTime = now;
+        }
+
         animFrameRef.current = requestAnimationFrame(tick);
       }
       tick();
@@ -71,27 +117,67 @@ export default function HomePage() {
         ? "audio/webm;codecs=opus"
         : MediaRecorder.isTypeSupported("audio/webm")
         ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
         : "audio/ogg";
 
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
+      setLiveTranscript("");
+      setLiveTranscriptStatus("Not started");
+
+      // WebSocket setup
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${wsProtocol}//127.0.0.1:8000/ws/analyze-live`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => setLiveTranscriptStatus("Connected (Local AI)");
+      ws.onerror = () => setLiveTranscriptStatus("Connection failed");
+      ws.onclose = () => setLiveTranscriptStatus("Disconnected");
+      
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.transcript !== undefined) {
+            setLiveTranscript(data.transcript);
+          }
+          if (data.score !== undefined) {
+            setLiveRiskScore(data.score);
+          }
+        } catch (err) {
+          console.error("WS parse error", err);
+        }
+      };
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+          if (ws.readyState === WebSocket.OPEN) {
+            const blob = new Blob(audioChunksRef.current, { type: mimeType });
+            ws.send(blob);
+          }
+        }
       };
 
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
         if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
         setAmplitude(0);
+        setAudioQualityMessage("");
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
         await submitAudio(blob, false);
       };
 
-      recorder.start(100);
+      recorder.start(3500); // 3.5s cumulative chunk
       setRecordState("recording");
       setRecordingSeconds(0);
+      setLiveRiskScore(0);
 
       startAmplitudeTracking(stream);
 
@@ -158,6 +244,8 @@ export default function HomePage() {
           voiceMatchScore: data.voice_match_score ?? undefined,
           languageDetected: data.language_detected || undefined,
           analysisMethod: data.voice_check_method || undefined,
+          llmAnalysis: data.llm_analysis || undefined,
+          engineSource: data.engine_source || undefined,
           createdAt: new Date().toISOString(),
         };
 
@@ -415,22 +503,36 @@ export default function HomePage() {
         {/* Status text */}
         <div style={{ textAlign: "center" }}>
           {isRecording && (
-            <p
-              style={{
-                fontFamily: "Manrope, sans-serif",
-                fontSize: simpleMode ? "1.3rem" : "1rem",
-                color: "#e06080",
-                margin: "0 0 4px 0",
-                fontWeight: 600,
-              }}
-            >
-              ● Recording{" "}
-              <span
-                style={{ fontFamily: "IBM Plex Mono, monospace" }}
+            <div style={{ textAlign: "center" }}>
+              <p
+                style={{
+                  fontFamily: "Manrope, sans-serif",
+                  fontSize: simpleMode ? "1.3rem" : "1rem",
+                  color: "#e06080",
+                  margin: "0 0 4px 0",
+                  fontWeight: 600,
+                }}
               >
-                {recordingSeconds}s
-              </span>
-            </p>
+                ● Recording{" "}
+                <span
+                  style={{ fontFamily: "IBM Plex Mono, monospace" }}
+                >
+                  {recordingSeconds}s
+                </span>
+              </p>
+              {audioQualityMessage && (
+                  <p
+                    style={{
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: "0.85rem",
+                      color: audioQualityMessage.includes("good") ? "#22c55e" : "#fbbf24",
+                      margin: "4px 0 0 0",
+                    }}
+                  >
+                    {audioQualityMessage}
+                  </p>
+              )}
+            </div>
           )}
           {isAnalyzing && (
             <div
@@ -470,6 +572,62 @@ export default function HomePage() {
             isRecording={isRecording}
             amplitude={amplitude}
           />
+        )}
+
+        {(isRecording || liveTranscript) && (
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 360,
+              background: "#112244",
+              border: "1px solid #1e3a6e",
+              borderRadius: 12,
+              padding: "12px 14px",
+              boxSizing: "border-box",
+            }}
+            aria-live="polite"
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 12,
+                color: "#C9A227",
+                fontFamily: "Manrope, sans-serif",
+                fontSize: "0.75rem",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+            >
+              <span>Live transcript preview</span>
+              <span style={{ color: liveRiskScore >= 90 ? "#e06080" : liveRiskScore >= 50 ? "#fbbf24" : "#8899bb", fontWeight: 500, textTransform: "none" }}>
+                Risk: {liveRiskScore}% | {liveTranscriptStatus}
+              </span>
+            </div>
+            <p
+              style={{
+                minHeight: 44,
+                margin: "8px 0 0",
+                color: liveTranscript ? "#F8F5EF" : "#8899bb",
+                fontFamily: "Manrope, sans-serif",
+                fontSize: simpleMode ? "1rem" : "0.9rem",
+                lineHeight: 1.5,
+              }}
+            >
+              {liveTranscript || "Start speaking. Words will appear here while you record."}
+            </p>
+            <p
+              style={{
+                margin: 0,
+                color: "#66799f",
+                fontFamily: "Manrope, sans-serif",
+                fontSize: "0.7rem",
+              }}
+            >
+              Powered by local on-device AI.
+            </p>
+          </div>
         )}
 
         {/* Error state */}

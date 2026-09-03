@@ -157,6 +157,23 @@ export default function ResultsPage() {
         >
           Analysis Results
         </h1>
+        {currentResult.engineSource && (
+          <span
+            style={{
+              fontFamily: "Manrope, sans-serif",
+              fontSize: "0.75rem",
+              background: currentResult.engineSource.includes("Python") ? "#2a4d35" : "#8B1E3F",
+              color: currentResult.engineSource.includes("Python") ? "#8cd3a6" : "#f1aabf",
+              padding: "4px 8px",
+              borderRadius: "4px",
+              fontWeight: 600,
+              marginLeft: "auto",
+              marginRight: "10px",
+            }}
+          >
+            {currentResult.engineSource}
+          </span>
+        )}
         {/* TTS button */}
         {"speechSynthesis" in (typeof window !== "undefined" ? window : {}) && (
           <button
@@ -259,6 +276,28 @@ export default function ResultsPage() {
           </div>
         )}
 
+      {/* Safety Action Plan / LLM Recommendations */}
+      {currentResult.llmAnalysis && currentResult.llmAnalysis.recommended_actions && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: "4px solid #C9A227" }}>
+          <h2
+            style={{
+              fontFamily: "Fraunces, Georgia, serif",
+              fontSize: simpleMode ? "1.2rem" : "1rem",
+              fontWeight: 700,
+              color: "#F8F5EF",
+              margin: "0 0 12px 0",
+            }}
+          >
+            📋 Safety Action Plan
+          </h2>
+          <ul style={{ paddingLeft: 20, margin: 0, color: "#c8c5bf", fontSize: simpleMode ? "1rem" : "0.9rem", lineHeight: 1.5, fontFamily: "Manrope, sans-serif" }}>
+            {currentResult.llmAnalysis.recommended_actions.map((action: string, i: number) => (
+              <li key={i} style={{ marginBottom: 8 }}>{action}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Transcript */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -353,6 +392,28 @@ export default function ResultsPage() {
 
       {/* Action buttons */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* Safe Pause Button */}
+        <button
+          onClick={() => {
+              alert("PAUSE & VERIFY:\n\n1. Do not send money.\n2. Do not share OTPs.\n3. Hang up and verify directly.");
+          }}
+          style={{
+            padding: simpleMode ? "20px" : "14px",
+            background: "#2a4d35",
+            border: "2px solid #3D6B4C",
+            borderRadius: 12,
+            color: "#8cd3a6",
+            fontFamily: "Manrope, sans-serif",
+            fontSize: simpleMode ? "1.1rem" : "1rem",
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 4px 12px rgba(42, 77, 53, 0.4)",
+          }}
+          aria-label="Pause and verify"
+        >
+          ✋ Pause and Verify
+        </button>
+
         {/* Report number */}
         {currentResult.callerNumber && !reportDone && (
           <button

@@ -11,6 +11,8 @@ export interface AnalysisResult {
   voiceMatchScore?: number;
   languageDetected?: string;
   analysisMethod?: string;
+  llmAnalysis?: any;
+  engineSource?: string;
   createdAt: string;
 }
 

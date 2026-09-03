@@ -17,10 +17,16 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
+import requests
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# Removed Groq dependency to enforce 100% local execution
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -53,7 +59,27 @@ app.add_middleware(
 # ─── Lazy model loading ───────────────────────────────────────────────────────
 _whisper_model = None
 _deepfake_classifier = None
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "tiny")
+GUARDIAN_WEBHOOK_URL = os.getenv("GUARDIAN_WEBHOOK_URL")
+if GUARDIAN_WEBHOOK_URL:
+    log.info("✅ Guardian Webhook URL loaded from .env (***)")
+else:
+    log.warning("Guardian Webhook URL not set in .env")
+
+def trigger_guardian_alert(request_id: str, score: float, transcript: str):
+    if not GUARDIAN_WEBHOOK_URL:
+        log.warning(f"[{request_id}] Guardian webhook skipped (GUARDIAN_WEBHOOK_URL not set).")
+        return
+    log.info(f"[{request_id}] Firing Guardian Webhook alert (Score: {score})!")
+    try:
+        payload = {
+            "content": f"🚨 **SCAM ALERT** 🚨\n\nYour loved one is currently on a highly suspicious call (Risk Score: **{score}**).\n\n**Live Transcript snippet:**\n> {transcript[-300:]}\n\n*Action recommended immediately!*"
+        }
+        res = requests.post(GUARDIAN_WEBHOOK_URL, json=payload, timeout=5)
+        res.raise_for_status()
+        log.info(f"[{request_id}] Guardian Webhook successfully fired.")
+    except Exception as e:
+        log.error(f"[{request_id}] Failed to fire Guardian webhook: {e}")
 
 
 def get_whisper():
@@ -184,32 +210,49 @@ def save_json_file(path: Path, data):
 # ─── Transcription ────────────────────────────────────────────────────────────
 
 def transcribe_audio(audio_path: str, language_hint: Optional[str] = None) -> dict:
-    """Transcribe audio using Whisper. Returns {text, language}."""
-    model = get_whisper()
-    if model is None:
-        log.warning("Whisper unavailable — using mock transcript for demo")
-        return {
-            "text": SAMPLE_SCAM_TRANSCRIPT,
-            "language": "en",
-            "method": "mock_demo",
-        }
-
+    """Transcribe audio using local openai-whisper model."""
     try:
-        options = {"fp16": False}
-        if language_hint and language_hint != "auto":
-            options["language"] = language_hint
+        model = get_whisper()
+        if not model:
+            log.warning("Local Whisper unavailable — using mock transcript")
+            return {
+                "text": SAMPLE_SCAM_TRANSCRIPT,
+                "language": "en",
+                "method": "mock_demo",
+            }
+            
+        import librosa
+        import soundfile as sf
+        
+        # Load and convert to standard WAV to prevent codec issues
+        fixed_wav_path = audio_path + "_fixed.wav"
+        try:
+            y, sr = librosa.load(audio_path, sr=16000)
+            sf.write(fixed_wav_path, y, sr)
+        except Exception as e:
+            log.warning(f"Could not convert to WAV, falling back to original: {e}")
+            fixed_wav_path = audio_path
 
-        result = model.transcribe(audio_path, **options)
+        log.info("Running local Whisper transcription...")
+        result = model.transcribe(fixed_wav_path, fp16=False)
+        text = result["text"].strip()
+        
+        # Filter out common Whisper hallucinations on silence
+        lower_text = text.lower()
+        if "thank you for watching" in lower_text or "amara.org" in lower_text or "subtitles by" in lower_text:
+            log.warning(f"Whisper hallucination detected and cleared: {text}")
+            text = ""
+            
         detected_lang = result.get("language", "unknown")
-        log.info(f"✅ Transcription done. Language: {detected_lang}. "
-                 f"Length: {len(result['text'])} chars")
+        
+        log.info(f"✅ Local Transcription done. Length: {len(text)} chars")
         return {
-            "text": result["text"].strip(),
+            "text": text,
             "language": detected_lang,
-            "method": "whisper",
+            "method": f"local_whisper_{WHISPER_MODEL_SIZE}",
         }
     except Exception as e:
-        log.error(f"Whisper transcription error: {e}")
+        log.error(f"Groq transcription error: {e}")
         return {
             "text": SAMPLE_SCAM_TRANSCRIPT,
             "language": "en",
@@ -293,10 +336,10 @@ def voice_authenticity_score(audio_path: str) -> dict:
 
 def content_risk_score(transcript: str) -> dict:
     """
-    Rule-based scam content detection.
-    Scans for urgency / money / secrecy categories.
-    Works across English, Hindi, and Tamil.
-    Score: 0 = no risk, 100 = all categories hit.
+    Two-stage scam content detection.
+    Stage A: Rule-based heuristics.
+    Stage B: Groq LLM (llama-3.3-70b-versatile).
+    Returns score 0-100 and categories hit.
     """
     text_lower = transcript.lower()
     hits = {}
@@ -304,24 +347,30 @@ def content_risk_score(transcript: str) -> dict:
     for category, keywords in SCAM_KEYWORDS.items():
         matched = []
         for kw in keywords:
-            # Check both lower-cased and original (for scripts)
             if kw.lower() in text_lower or kw in transcript:
                 matched.append(kw)
         if matched:
-            hits[category] = matched[:5]  # cap for response size
+            hits[category] = matched[:5]
 
-    categories_hit = len(hits)
+    categories_hit = list(hits.keys())
     # 1 category = 35, 2 = 65, 3 = 90
     score_map = {0: 0, 1: 35, 2: 65, 3: 90}
-    score = score_map.get(categories_hit, 90)
+    stage_a_score = score_map.get(len(hits), 90)
+    
+    final_score = float(stage_a_score)
+    method = "stage_a_heuristic"
+    llm_analysis = None
+    
+    # Removed Groq LLM Stage B to enforce local execution.
+    # Falling back entirely to Stage A heuristics.
 
-    log.info(
-        f"✅ Content check done. Categories hit: {list(hits.keys())} → Score: {score}"
-    )
+    log.info(f"✅ Content check done. Score: {final_score}")
     return {
-        "score": float(score),
-        "categories_hit": list(hits.keys()),
+        "score": final_score,
+        "categories_hit": categories_hit,
         "matched_phrases": hits,
+        "method": method,
+        "llm_analysis": llm_analysis
     }
 
 
@@ -391,6 +440,71 @@ async def health_check():
         "whisper_model": WHISPER_MODEL_SIZE,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.websocket("/ws/analyze-live")
+async def analyze_live(websocket: WebSocket):
+    await websocket.accept()
+    request_id = str(uuid.uuid4())[:8]
+    log.info(f"[{request_id}] ─── Live WS Session Started ───")
+    
+    guardian_alert_fired = False
+    
+    try:
+        while True:
+            # Receive binary audio chunk (cumulative buffer)
+            data = await websocket.receive_bytes()
+            log.info(f"[{request_id}] Received WS chunk: {len(data)} bytes")
+            
+            start_time = time.time()
+            
+            # Save chunk to temp file
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".webm", dir=str(AUDIO_TEMP), prefix=f"ws_{request_id}_")
+            with os.fdopen(tmp_fd, "wb") as f:
+                f.write(data)
+                
+            # If it's too small, skip
+            if len(data) < 1000:
+                log.info(f"[{request_id}] Chunk too small, skipping.")
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                continue
+                
+            # Transcribe (cumulative audio so far)
+            transcript_result = transcribe_audio(tmp_path, language_hint="en")
+            text = transcript_result.get("text", "")
+            
+            # Risk score (Stage A only)
+            content_result = content_risk_score(text)
+            score = content_result.get("score", 0)
+            
+            # Guardian Alert
+            if score >= 90 and not guardian_alert_fired:
+                # Fire asynchronously using to_thread
+                asyncio.create_task(asyncio.to_thread(trigger_guardian_alert, request_id, score, text))
+                guardian_alert_fired = True
+                
+            elapsed = time.time() - start_time
+            
+            # Send back the update
+            response_payload = {
+                "transcript": text,
+                "score": score,
+                "processing_time_s": round(elapsed, 2)
+            }
+            await websocket.send_json(response_payload)
+            
+            # Cleanup temp file
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+                
+    except WebSocketDisconnect:
+        log.info(f"[{request_id}] WS disconnected.")
+    except Exception as e:
+        log.error(f"[{request_id}] WS error: {e}")
 
 
 @app.post("/analyze")
@@ -474,7 +588,7 @@ async def analyze_audio(
         elapsed = round(time.time() - start_time, 2)
         log.info(f"[{request_id}] ─── Done in {elapsed}s ───")
 
-        return {
+        response_data = {
             "request_id": request_id,
             "transcript": transcript_result["text"],
             "language_detected": transcript_result.get("language", "en"),
@@ -488,7 +602,9 @@ async def analyze_audio(
             "contact_name": contact_name,
             "caller_number": caller_number,
             "processing_time_s": elapsed,
+            "llm_analysis": content_result.get("llm_analysis"),
         }
+        return response_data
 
     except Exception as e:
         log.error(f"[{request_id}] Pipeline error: {traceback.format_exc()}")
