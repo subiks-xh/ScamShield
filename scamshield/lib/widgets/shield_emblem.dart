@@ -4,13 +4,13 @@ import '../theme/app_theme.dart';
 /// Heraldic shield CustomPainter — the visual identity of ScamShield.
 /// On Home: subtle outline behind mic button.
 /// On Results: animates filling with verdict color when analysis completes.
-class ShieldEmblем extends StatefulWidget {
+class ShieldEmblem extends StatefulWidget {
   final String? verdict; // null = outline only
   final double size;
   final bool animate;
   final ShieldVariant variant;
 
-  const ShieldEmblем({
+  const ShieldEmblem({
     super.key,
     this.verdict,
     this.size = 120,
@@ -19,12 +19,12 @@ class ShieldEmblем extends StatefulWidget {
   });
 
   @override
-  State<ShieldEmblем> createState() => _ShieldEmblemState();
+  State<ShieldEmblem> createState() => _ShieldEmblemState();
 }
 
 enum ShieldVariant { home, result, history, empty }
 
-class _ShieldEmblemState extends State<ShieldEmblем>
+class _ShieldEmblemState extends State<ShieldEmblem>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fillAnimation;
@@ -51,7 +51,7 @@ class _ShieldEmblemState extends State<ShieldEmblем>
   }
 
   @override
-  void didUpdateWidget(ShieldEmblем old) {
+  void didUpdateWidget(ShieldEmblem old) {
     super.didUpdateWidget(old);
     if (widget.verdict != null && old.verdict == null) {
       _controller.forward();
@@ -255,13 +255,3 @@ class _ShieldPainter extends CustomPainter {
       old.variant != variant;
 }
 
-// Public alias (avoids Cyrillic "м" in the internal name)
-class ShieldEmblem extends ShieldEmblем {
-  const ShieldEmblem({
-    super.key,
-    super.verdict,
-    super.size,
-    super.animate,
-    super.variant,
-  });
-}

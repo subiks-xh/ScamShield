@@ -59,7 +59,7 @@ app.add_middleware(
 # ─── Lazy model loading ───────────────────────────────────────────────────────
 _whisper_model = None
 _deepfake_classifier = None
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "tiny")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "base")
 GUARDIAN_WEBHOOK_URL = os.getenv("GUARDIAN_WEBHOOK_URL")
 if GUARDIAN_WEBHOOK_URL:
     log.info("✅ Guardian Webhook URL loaded from .env (***)")
@@ -211,6 +211,8 @@ def save_json_file(path: Path, data):
 
 def transcribe_audio(audio_path: str, language_hint: Optional[str] = None) -> dict:
     """Transcribe audio using local openai-whisper model."""
+    import librosa
+    import soundfile as sf
     try:
         model = get_whisper()
         if not model:
@@ -219,24 +221,36 @@ def transcribe_audio(audio_path: str, language_hint: Optional[str] = None) -> di
                 "text": SAMPLE_SCAM_TRANSCRIPT,
                 "language": "en",
                 "method": "mock_demo",
+                "status": "success"
             }
-            
-        import librosa
-        import soundfile as sf
-        
-        # Load and convert to standard WAV to prevent codec issues
-        fixed_wav_path = audio_path + "_fixed.wav"
+
+        # Audio Validation & Safe Extraction
         try:
             y, sr = librosa.load(audio_path, sr=16000)
+            duration_sec = len(y) / sr
+            log.info(f"Decoded WAV duration: {duration_sec:.2f}s")
+            if duration_sec < 0.5:
+                log.warning("Decoded audio too short, rejecting.")
+                return {"text": "", "language": "en", "method": "rejected_too_short", "status": "rejected"}
+                
+            fixed_wav_path = audio_path + "_fixed.wav"
             sf.write(fixed_wav_path, y, sr)
         except Exception as e:
-            log.warning(f"Could not convert to WAV, falling back to original: {e}")
-            fixed_wav_path = audio_path
+            log.error(f"librosa extraction failed: {e}")
+            return {"text": "", "language": "en", "method": "rejected_decode_failed", "status": "rejected"}
 
         log.info("Running local Whisper transcription...")
         result = model.transcribe(fixed_wav_path, fp16=False)
         text = result["text"].strip()
         
+        # Hallucination Protection: Repetition detection
+        words = text.split()
+        if len(words) > 12:
+            unique_ratio = len(set([w.lower() for w in words])) / len(words)
+            if unique_ratio < 0.25: # Highly repetitive
+                log.warning(f"Whisper hallucination detected (unique ratio {unique_ratio:.2f}): {text}")
+                return {"text": "", "language": "en", "method": "rejected_hallucination", "status": "rejected"}
+
         # Filter out common Whisper hallucinations on silence
         lower_text = text.lower()
         if "thank you for watching" in lower_text or "amara.org" in lower_text or "subtitles by" in lower_text:
@@ -250,13 +264,15 @@ def transcribe_audio(audio_path: str, language_hint: Optional[str] = None) -> di
             "text": text,
             "language": detected_lang,
             "method": f"local_whisper_{WHISPER_MODEL_SIZE}",
+            "status": "success"
         }
     except Exception as e:
-        log.error(f"Groq transcription error: {e}")
+        log.error(f"Whisper transcription error: {e}")
         return {
             "text": SAMPLE_SCAM_TRANSCRIPT,
             "language": "en",
             "method": "mock_fallback",
+            "status": "success"
         }
 
 
@@ -449,12 +465,14 @@ async def analyze_live(websocket: WebSocket):
     log.info(f"[{request_id}] ─── Live WS Session Started ───")
     
     guardian_alert_fired = False
+    request_number = 0
     
     try:
         while True:
             # Receive binary audio chunk (cumulative buffer)
             data = await websocket.receive_bytes()
-            log.info(f"[{request_id}] Received WS chunk: {len(data)} bytes")
+            request_number += 1
+            log.info(f"[DIAGNOSTIC] WS received Request #{request_number} | Size: {len(data)} bytes")
             
             start_time = time.time()
             
@@ -470,8 +488,18 @@ async def analyze_live(websocket: WebSocket):
                     os.unlink(tmp_path)
                 continue
                 
-            # Transcribe (cumulative audio so far)
-            transcript_result = transcribe_audio(tmp_path, language_hint="en")
+            # Transcribe (cumulative audio so far) with timeout
+            try:
+                # Run transcription in a separate thread so asyncio can time it out
+                transcript_result = await asyncio.wait_for(
+                    asyncio.to_thread(transcribe_audio, tmp_path, "en"),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                log.error("Transcription timed out! Rejecting update.")
+                transcript_result = {"text": "", "status": "rejected"}
+            
+            status = transcript_result.get("status", "success")
             text = transcript_result.get("text", "")
             
             # Risk score (Stage A only)
@@ -490,8 +518,10 @@ async def analyze_live(websocket: WebSocket):
             response_payload = {
                 "transcript": text,
                 "score": score,
+                "status": status,
                 "processing_time_s": round(elapsed, 2)
             }
+            log.info(f"[DIAGNOSTIC] Transcription time: {elapsed:.2f}s | Result length: {len(text)} chars | Text: '{text}'")
             await websocket.send_json(response_payload)
             
             # Cleanup temp file

@@ -53,6 +53,11 @@ export default function HomePage() {
   const [liveTranscriptStatus, setLiveTranscriptStatus] = useState("Not started");
   const [liveRiskScore, setLiveRiskScore] = useState(0);
 
+  const stableTranscriptRef = useRef<string>("");
+  const isTranscribingRef = useRef<boolean>(false);
+  const pendingUpdateRef = useRef<boolean>(false);
+  const requestCountRef = useRef<number>(0);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -137,11 +142,35 @@ export default function HomePage() {
       ws.onerror = () => setLiveTranscriptStatus("Connection failed");
       ws.onclose = () => setLiveTranscriptStatus("Disconnected");
       
+      const sendWsUpdate = () => {
+        if (ws.readyState === WebSocket.OPEN && audioChunksRef.current.length > 0) {
+          isTranscribingRef.current = true;
+          pendingUpdateRef.current = false;
+          requestCountRef.current += 1;
+          const blob = new Blob(audioChunksRef.current, { type: mimeType });
+          console.log(`[DIAGNOSTIC] Sending LIVE Request #${requestCountRef.current} | Cumulative Blob Size: ${blob.size} bytes | Duration ~${audioChunksRef.current.length * 3.5}s`);
+          ws.send(blob);
+        }
+      };
+
       ws.onmessage = (event) => {
+        isTranscribingRef.current = false;
         try {
           const data = JSON.parse(event.data);
-          if (data.transcript !== undefined) {
-            setLiveTranscript(data.transcript);
+          
+          if (data.status === "rejected") {
+            console.log(`[DIAGNOSTIC] Request rejected by backend (likely corrupted or hallucination). Retaining stable transcript.`);
+          } else if (data.transcript !== undefined) {
+            const newText = data.transcript.trim();
+            // Stable accumulation logic
+            if (newText.length >= stableTranscriptRef.current.length) {
+              stableTranscriptRef.current = newText;
+              setLiveTranscript(newText);
+            } else if (newText.length > 0 && stableTranscriptRef.current.length - newText.length < 30) {
+              // Allow minor corrections
+              stableTranscriptRef.current = newText;
+              setLiveTranscript(newText);
+            }
           }
           if (data.score !== undefined) {
             setLiveRiskScore(data.score);
@@ -149,14 +178,20 @@ export default function HomePage() {
         } catch (err) {
           console.error("WS parse error", err);
         }
+        
+        // If an update was queued while we were transcribing, process it now
+        if (pendingUpdateRef.current && mediaRecorderRef.current?.state === "recording") {
+           sendWsUpdate();
+        }
       };
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           audioChunksRef.current.push(e.data);
-          if (ws.readyState === WebSocket.OPEN) {
-            const blob = new Blob(audioChunksRef.current, { type: mimeType });
-            ws.send(blob);
+          if (!isTranscribingRef.current) {
+            sendWsUpdate();
+          } else {
+            pendingUpdateRef.current = true;
           }
         }
       };
@@ -178,6 +213,10 @@ export default function HomePage() {
       setRecordState("recording");
       setRecordingSeconds(0);
       setLiveRiskScore(0);
+      stableTranscriptRef.current = "";
+      isTranscribingRef.current = false;
+      pendingUpdateRef.current = false;
+      requestCountRef.current = 0;
 
       startAmplitudeTracking(stream);
 
@@ -248,6 +287,12 @@ export default function HomePage() {
           engineSource: data.engine_source || undefined,
           createdAt: new Date().toISOString(),
         };
+
+        // Final authoritative transcript overwrite
+        if (data.transcript) {
+          setLiveTranscript(data.transcript);
+          stableTranscriptRef.current = data.transcript;
+        }
 
         setCurrentResult(result);
         addToHistory(result);
