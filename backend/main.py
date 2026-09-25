@@ -12,6 +12,7 @@ import logging
 import asyncio
 import tempfile
 import traceback
+import wave
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -476,10 +477,15 @@ async def analyze_live(websocket: WebSocket):
             
             start_time = time.time()
             
-            # Save chunk to temp file
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".webm", dir=str(AUDIO_TEMP), prefix=f"ws_{request_id}_")
-            with os.fdopen(tmp_fd, "wb") as f:
-                f.write(data)
+            # Save chunk to temp file (wrapping raw PCM in WAV)
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav", dir=str(AUDIO_TEMP), prefix=f"ws_{request_id}_")
+            os.close(tmp_fd) # Close it so wave can open it
+            
+            with wave.open(tmp_path, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2) # 16-bit
+                wav_file.setframerate(16000)
+                wav_file.writeframes(data)
                 
             # If it's too small, skip
             if len(data) < 1000:

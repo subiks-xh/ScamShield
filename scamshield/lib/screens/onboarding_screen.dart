@@ -73,12 +73,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               if (slide['useShield'] == true)
                 ShieldEmblem(size: 100, variant: ShieldVariant.home, animate: false)
               else
-                Text(slide['emoji']!, style: const TextStyle(fontSize: 70)),
+                Text(slide['emoji'] as String, style: const TextStyle(fontSize: 70)),
 
               const SizedBox(height: 32),
 
               Text(
-                slide['title']!,
+                slide['title'] as String,
                 style: AppTypography.heading1(context),
                 textAlign: TextAlign.center,
               ),
@@ -86,7 +86,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 16),
 
               Text(
-                slide['body']!,
+                slide['body'] as String,
                 style: AppTypography.body(context),
                 textAlign: TextAlign.center,
               ),

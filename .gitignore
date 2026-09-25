@@ -18,3 +18,5 @@ backend/audio_temp/
 
 # Misc
 .DS_Store
+.gradle/
+_archive_nextjs_reference/

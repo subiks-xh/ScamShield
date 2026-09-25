@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hive/hive.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../theme/app_theme.dart';
 import '../widgets/shield_emblem.dart';
@@ -32,6 +35,14 @@ class _HomeScreenState extends State<HomeScreen> {
   int _recordingSeconds = 0;
   Timer? _timer;
   Timer? _amplitudeTimer;
+  Timer? _wsTimer;
+  StreamSubscription? _audioSubscription;
+  final List<int> _pcmBuffer = [];
+  WebSocketChannel? _wsChannel;
+  String _liveTranscript = '';
+  double _liveScore = 0.0;
+  bool _wsFallback = false;
+  
   String? _recordingPath;
   final TextEditingController _callerController = TextEditingController();
   final TextEditingController _contactController = TextEditingController();
@@ -73,6 +84,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _recorder.dispose();
     _timer?.cancel();
     _amplitudeTimer?.cancel();
+    _wsTimer?.cancel();
+    _audioSubscription?.cancel();
+    _wsChannel?.sink.close();
     _callerController.dispose();
     _contactController.dispose();
     super.dispose();
@@ -91,6 +105,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _errorMessage = '';
       _state = RecordState.idle;
+      _liveTranscript = '';
+      _liveScore = 0.0;
+      _wsFallback = false;
     });
 
     final permission = await Permission.microphone.request();
@@ -102,18 +119,46 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    _pcmBuffer.clear();
+    
+    // Connect to WebSocket
+    try {
+      final wsUrl = ApiService.baseUrl.replaceFirst('http', 'ws') + '/ws/analyze-live';
+      _wsChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      _wsChannel!.stream.listen(
+        (message) {
+          if (mounted) {
+            try {
+              final data = jsonDecode(message);
+              setState(() {
+                _liveTranscript = data['transcript'] ?? '';
+                _liveScore = (data['score'] ?? 0).toDouble();
+              });
+            } catch (_) {}
+          }
+        },
+        onError: (e) {
+          if (mounted) setState(() => _wsFallback = true);
+        },
+        onDone: () {
+          if (mounted) setState(() => _wsFallback = true);
+        },
+      );
+    } catch (e) {
+      _wsFallback = true;
+    }
 
-    await _recorder.start(
+    final stream = await _recorder.startStream(
       const RecordConfig(
-        encoder: AudioEncoder.aacLc,
-        bitRate: 128000,
-        sampleRate: 44100,
-      ), 
-      path: path
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+      )
     );
-    _recordingPath = path;
+
+    _audioSubscription = stream.listen((data) {
+      _pcmBuffer.addAll(data);
+    });
 
     setState(() {
       _state = RecordState.recording;
@@ -122,6 +167,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       setState(() => _recordingSeconds++);
+    });
+    
+    _wsTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
+      if (_wsChannel != null && !_wsFallback && _pcmBuffer.isNotEmpty) {
+        _wsChannel!.sink.add(Uint8List.fromList(_pcmBuffer));
+      }
     });
 
     // Amplitude polling
@@ -143,16 +194,53 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _writeWavFile(File file, List<int> pcmBytes, int sampleRate, int channels) async {
+    final byteData = ByteData(44 + pcmBytes.length);
+    // "RIFF"
+    byteData.setUint8(0, 82); byteData.setUint8(1, 73); byteData.setUint8(2, 70); byteData.setUint8(3, 70);
+    byteData.setUint32(4, 36 + pcmBytes.length, Endian.little);
+    // "WAVE"
+    byteData.setUint8(8, 87); byteData.setUint8(9, 65); byteData.setUint8(10, 86); byteData.setUint8(11, 69);
+    // "fmt "
+    byteData.setUint8(12, 102); byteData.setUint8(13, 109); byteData.setUint8(14, 116); byteData.setUint8(15, 32);
+    byteData.setUint32(16, 16, Endian.little); // chunk size
+    byteData.setUint16(20, 1, Endian.little); // format (1 = PCM)
+    byteData.setUint16(22, channels, Endian.little);
+    byteData.setUint32(24, sampleRate, Endian.little);
+    byteData.setUint32(28, sampleRate * channels * 2, Endian.little); // byte rate
+    byteData.setUint16(32, channels * 2, Endian.little); // block align
+    byteData.setUint16(34, 16, Endian.little); // bits per sample
+    // "data"
+    byteData.setUint8(36, 100); byteData.setUint8(37, 97); byteData.setUint8(38, 116); byteData.setUint8(39, 97);
+    byteData.setUint32(40, pcmBytes.length, Endian.little);
+    
+    // Write PCM data
+    for (int i = 0; i < pcmBytes.length; i++) {
+      byteData.setUint8(44 + i, pcmBytes[i]);
+    }
+    
+    await file.writeAsBytes(byteData.buffer.asUint8List());
+  }
+
   Future<void> _stopRecording() async {
     _timer?.cancel();
     _amplitudeTimer?.cancel();
+    _wsTimer?.cancel();
+    _audioSubscription?.cancel();
+    await _recorder.stop();
+    _wsChannel?.sink.close();
+    
     setState(() {
       _amplitude = 0;
       _audioQualityMessage = '';
     });
-    await _recorder.stop();
-    if (_recordingPath != null) {
-      await _submitAudio(File(_recordingPath!), isDemo: false);
+    
+    if (_pcmBuffer.isNotEmpty) {
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.wav';
+      final file = File(path);
+      await _writeWavFile(file, _pcmBuffer, 16000, 1);
+      await _submitAudio(file, isDemo: false);
     }
   }
 
@@ -406,6 +494,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                     ),
                                   ),
+                                if (_wsFallback)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: Text('Live analysis paused — full analysis will run when stopped', style: AppTypography.label(context, color: AppColors.amberWarnLight)),
+                                  )
+                                else if (_liveScore > 0)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: Text('Live Risk Score: ${_liveScore.toInt()}', style: AppTypography.body(context, color: AppColors.antiqueGold)),
+                                  ),
+                                if (_liveTranscript.isNotEmpty && !_wsFallback)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: Text('"${_liveTranscript.length > 50 ? _liveTranscript.substring(_liveTranscript.length - 50) : _liveTranscript}..."', style: AppTypography.label(context, color: AppColors.textMuted), textAlign: TextAlign.center),
+                                  )
                               ],
                             )
                           else if (isAnalyzing)

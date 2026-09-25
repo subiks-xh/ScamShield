@@ -142,15 +142,6 @@ class AppTheme {
           fontWeight: FontWeight.w700,
           color: AppColors.ivory,
         ),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.royalPurple, AppColors.purpleLight],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-        ),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: AppColors.royalNavy,

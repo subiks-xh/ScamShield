@@ -56,7 +56,7 @@ class _ResultsScreenState extends State<ResultsScreen> with SingleTickerProvider
   }
 
   Future<void> _speak(String text) async {
-    await _tts.setRate(0.85);
+    await _tts.setSpeechRate(0.85);
     await _tts.setPitch(1.0);
     await _tts.speak(text);
   }

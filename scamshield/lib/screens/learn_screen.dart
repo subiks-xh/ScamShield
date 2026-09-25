@@ -168,7 +168,6 @@ class _LearnScreenState extends State<LearnScreen> {
     );
   }
 
-  bool get simpleMode => prefs.getBool('simpleMode') ?? false;
 }
 
 class _PatternsTab extends StatelessWidget {
@@ -242,7 +241,7 @@ class _PatternCardState extends State<_PatternCard> {
                 style: AppTypography.label(context, color: AppColors.antiqueGold),
               ),
               const SizedBox(height: 6),
-              ...(_patterns[_patterns.indexOf(widget.pattern)]['signs'] as List<String>).map(
+              ...(widget.pattern['signs'] as List<String>).map(
                 (sign) => Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Row(
@@ -380,7 +379,7 @@ class _QuizTabState extends State<_QuizTab> {
             const SizedBox(height: 12),
             Text('Q${_current + 1} of ${_questions.length}', style: AppTypography.label(context, color: AppColors.antiqueGold)),
             const SizedBox(height: 8),
-            Text(q['q']!, style: AppTypography.heading2(context)),
+            Text(q['q'] as String, style: AppTypography.heading2(context)),
             const SizedBox(height: 16),
             ...(q['options'] as List<String>).asMap().entries.map((e) {
               final idx = e.key;
@@ -435,7 +434,7 @@ class _QuizTabState extends State<_QuizTab> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(q['explanation']!, style: AppTypography.body(context)),
+                    Text(q['explanation'] as String, style: AppTypography.body(context)),
                   ],
                 ),
               ),
