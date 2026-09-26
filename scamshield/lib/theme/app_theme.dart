@@ -3,32 +3,32 @@ import 'package:google_fonts/google_fonts.dart';
 
 /// ScamShield Design System Tokens
 class AppColors {
-  // Primary palette
-  static const Color royalNavy = Color(0xFF0B1D3A);
-  static const Color navyLight = Color(0xFF112244);
-  static const Color navyDark = Color(0xFF060E1C);
-  static const Color royalPurple = Color(0xFF3B1E54);
-  static const Color purpleLight = Color(0xFF4E2970);
-  static const Color antiqueGold = Color(0xFFC9A227);
-  static const Color goldLight = Color(0xFFE8BC40);
-  static const Color goldDim = Color(0xFF8A6D1A);
-  static const Color ivory = Color(0xFFF8F5EF);
-  static const Color ivoryDim = Color(0xFFC8C5BF);
+  // Primary palette (Cyber/Neon Theme)
+  static const Color royalNavy = Color(0xFF0F172A); // Deep slate
+  static const Color navyLight = Color(0xFF1E293B);
+  static const Color navyDark = Color(0xFF020617);
+  static const Color royalPurple = Color(0xFF7C3AED); // Bright purple
+  static const Color purpleLight = Color(0xFF8B5CF6);
+  static const Color antiqueGold = Color(0xFFF59E0B); // Amber/Neon orange
+  static const Color goldLight = Color(0xFFFCD34D);
+  static const Color goldDim = Color(0xFFB45309);
+  static const Color ivory = Color(0xFFF8FAFC);
+  static const Color ivoryDim = Color(0xFFCBD5E1);
 
   // Risk states
-  static const Color deepCrimson = Color(0xFF8B1E3F);
-  static const Color crimsonLight = Color(0xFFB5264F);
-  static const Color amberWarn = Color(0xFFB8860B);
-  static const Color amberWarnLight = Color(0xFFD99E0D);
-  static const Color deepEmerald = Color(0xFF3D6B4C);
-  static const Color emeraldLight = Color(0xFF4E8A61);
+  static const Color deepCrimson = Color(0xFFE11D48); // Neon Rose
+  static const Color crimsonLight = Color(0xFFFB7185);
+  static const Color amberWarn = Color(0xFFF97316);
+  static const Color amberWarnLight = Color(0xFFFDBA74);
+  static const Color deepEmerald = Color(0xFF10B981); // Neon Emerald
+  static const Color emeraldLight = Color(0xFF34D399);
 
   // UI
-  static const Color surface = Color(0xFF112244);
-  static const Color surfaceDark = Color(0xFF0D1F3D);
-  static const Color divider = Color(0xFF1E3A6E);
-  static const Color textMuted = Color(0xFF8899BB);
-  static const Color textDim = Color(0xFF55667A);
+  static const Color surface = Color(0xFF1E293B);
+  static const Color surfaceDark = Color(0xFF0F172A);
+  static const Color divider = Color(0xFF334155);
+  static const Color textMuted = Color(0xFF94A3B8);
+  static const Color textDim = Color(0xFF64748B);
 
   // Score colors
   static Color scoreColor(double score) {

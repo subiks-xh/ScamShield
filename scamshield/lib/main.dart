@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'theme/app_theme.dart';
 import 'models/analysis_result.dart';
@@ -12,6 +13,10 @@ import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/learn_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'screens/voice_registration_screen.dart';
+import 'screens/caller_lookup_screen.dart';
+import 'screens/emergency_contacts_screen.dart';
+import 'screens/voice_registration_screen.dart';
 
 // Global state (simple approach for hackathon — use Riverpod in production)
 AnalysisResult? currentResult;
@@ -84,6 +89,18 @@ class _ScamShieldAppState extends State<ScamShieldApp> {
         path: '/onboarding',
         builder: (_, __) => const OnboardingScreen(),
       ),
+      GoRoute(
+        path: '/enroll-voice',
+        builder: (_, __) => const VoiceRegistrationScreen(),
+      ),
+      GoRoute(
+        path: '/caller-lookup',
+        builder: (_, __) => const CallerLookupScreen(),
+      ),
+      GoRoute(
+        path: '/emergency-contacts',
+        builder: (_, __) => const EmergencyContactsScreen(),
+      ),
     ],
   );
 
@@ -115,10 +132,10 @@ class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
 
   static const _destinations = [
-    ('/', '🛡️', 'Home'),
-    ('/history', '📋', 'History'),
-    ('/learn', '📚', 'Learn'),
-    ('/settings', '⚙️', 'Settings'),
+    ('/', Icons.shield, 'Home'),
+    ('/history', Icons.history, 'History'),
+    ('/learn', Icons.school, 'Learn'),
+    ('/settings', Icons.settings, 'Settings'),
   ];
 
   @override
@@ -142,7 +159,8 @@ class _MainShellState extends State<MainShell> {
           },
           items: _destinations
               .map((d) => BottomNavigationBarItem(
-                    icon: Text(d.$2, style: const TextStyle(fontSize: 20)),
+                    icon: Icon(d.$2 as IconData, size: 24, color: AppColors.textDim),
+                    activeIcon: Icon(d.$2 as IconData, size: 28, color: AppColors.antiqueGold),
                     label: d.$3,
                   ))
               .toList(),

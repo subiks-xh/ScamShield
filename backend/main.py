@@ -211,38 +211,60 @@ def save_json_file(path: Path, data):
 # ─── Transcription ────────────────────────────────────────────────────────────
 
 def transcribe_audio(audio_path: str, language_hint: Optional[str] = None) -> dict:
-    """Transcribe audio using local openai-whisper model."""
+    """Transcribe audio using Groq Whisper API for instant results."""
     import librosa
     import soundfile as sf
+    import requests
+    
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key:
+        log.warning("Groq API key not found. Using mock transcript.")
+        return {
+            "text": SAMPLE_SCAM_TRANSCRIPT,
+            "language": "en",
+            "method": "mock_demo",
+            "status": "success"
+        }
+
     try:
-        model = get_whisper()
-        if not model:
-            log.warning("Local Whisper unavailable — using mock transcript")
-            return {
-                "text": SAMPLE_SCAM_TRANSCRIPT,
-                "language": "en",
-                "method": "mock_demo",
-                "status": "success"
+        # Send directly to Groq to support WebM without ffmpeg dependency
+        target_path = audio_path
+        
+        # Determine content type based on extension
+        ext = os.path.splitext(target_path)[1].lower()
+        if ext == '.webm':
+            mime_type = 'audio/webm'
+        elif ext == '.wav':
+            mime_type = 'audio/wav'
+        else:
+            mime_type = 'audio/mpeg'
+
+        log.info("Running Groq Whisper transcription...")
+        
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        headers = {
+            "Authorization": f"Bearer {groq_api_key}"
+        }
+        
+        with open(target_path, "rb") as f:
+            files = {
+                "file": (os.path.basename(target_path), f, mime_type)
             }
-
-        # Audio Validation & Safe Extraction
-        try:
-            y, sr = librosa.load(audio_path, sr=16000)
-            duration_sec = len(y) / sr
-            log.info(f"Decoded WAV duration: {duration_sec:.2f}s")
-            if duration_sec < 0.5:
-                log.warning("Decoded audio too short, rejecting.")
-                return {"text": "", "language": "en", "method": "rejected_too_short", "status": "rejected"}
+            data = {
+                "model": os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo"),
+                "response_format": "json"
+            }
+            if language_hint:
+                data["language"] = language_hint
                 
-            fixed_wav_path = audio_path + "_fixed.wav"
-            sf.write(fixed_wav_path, y, sr)
-        except Exception as e:
-            log.error(f"librosa extraction failed: {e}")
-            return {"text": "", "language": "en", "method": "rejected_decode_failed", "status": "rejected"}
-
-        log.info("Running local Whisper transcription...")
-        result = model.transcribe(fixed_wav_path, fp16=False)
-        text = result["text"].strip()
+            response = requests.post(url, headers=headers, files=files, data=data, timeout=10)
+            
+        if response.status_code != 200:
+            log.error(f"Groq transcription failed: {response.text}")
+            return {"text": "", "language": "en", "method": "groq_failed", "status": "rejected"}
+            
+        result = response.json()
+        text = result.get("text", "").strip()
         
         # Hallucination Protection: Repetition detection
         words = text.split()
@@ -258,22 +280,20 @@ def transcribe_audio(audio_path: str, language_hint: Optional[str] = None) -> di
             log.warning(f"Whisper hallucination detected and cleared: {text}")
             text = ""
             
-        detected_lang = result.get("language", "unknown")
-        
-        log.info(f"✅ Local Transcription done. Length: {len(text)} chars")
+        log.info(f"✅ Groq Transcription done. Length: {len(text)} chars")
         return {
             "text": text,
-            "language": detected_lang,
-            "method": f"local_whisper_{WHISPER_MODEL_SIZE}",
+            "language": language_hint or "en",
+            "method": "groq_whisper",
             "status": "success"
         }
     except Exception as e:
         log.error(f"Whisper transcription error: {e}")
         return {
-            "text": SAMPLE_SCAM_TRANSCRIPT,
+            "text": "",
             "language": "en",
-            "method": "mock_fallback",
-            "status": "success"
+            "method": "error_fallback",
+            "status": "rejected"
         }
 
 
@@ -477,15 +497,22 @@ async def analyze_live(websocket: WebSocket):
             
             start_time = time.time()
             
-            # Save chunk to temp file (wrapping raw PCM in WAV)
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav", dir=str(AUDIO_TEMP), prefix=f"ws_{request_id}_")
-            os.close(tmp_fd) # Close it so wave can open it
+            # Check for WebM magic bytes (1A 45 DF A3)
+            is_webm = data.startswith(b'\x1aE\xdf\xa3')
             
-            with wave.open(tmp_path, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2) # 16-bit
-                wav_file.setframerate(16000)
-                wav_file.writeframes(data)
+            suffix = ".webm" if is_webm else ".wav"
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, dir=str(AUDIO_TEMP), prefix=f"ws_{request_id}_")
+            os.close(tmp_fd)
+            
+            if is_webm:
+                with open(tmp_path, "wb") as f:
+                    f.write(data)
+            else:
+                with wave.open(tmp_path, "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2) # 16-bit
+                    wav_file.setframerate(16000)
+                    wav_file.writeframes(data)
                 
             # If it's too small, skip
             if len(data) < 1000:
@@ -841,3 +868,41 @@ async def delete_contact(name: str):
         return JSONResponse(status_code=404, content={"error": "Contact not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/sos/trigger")
+async def trigger_sos():
+    """Trigger the emergency SOS alert."""
+    try:
+        # In a real app this would notify the pre-configured emergency contacts
+        log.warning("🚨 SOS ALERT TRIGGERED 🚨")
+        if GUARDIAN_WEBHOOK_URL:
+            payload = {
+                "content": "🚨 **MANUAL SOS TRIGGERED** 🚨\n\nYour loved one has manually pressed the Panic Button during a call!"
+            }
+            res = requests.post(GUARDIAN_WEBHOOK_URL, json=payload, timeout=5)
+            res.raise_for_status()
+        
+        return {"success": True, "message": "Emergency contacts notified."}
+    except Exception as e:
+        log.error(f"SOS trigger error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+class CoachRequest(BaseModel):
+    transcript: str
+
+@app.post("/coach/advice")
+async def get_coaching_advice(req: CoachRequest):
+    """Provide real-time advice on what to say next to safely hang up."""
+    text = req.transcript.lower()
+    advice = "Just say: 'I can't talk right now, please put this in writing.' and hang up."
+    
+    if "money" in text or "card" in text or "bank" in text:
+        advice = "They are asking for money. Do NOT confirm any details. Say: 'I need to check with my bank directly' and hang up."
+    elif "police" in text or "arrest" in text or "warrant" in text:
+        advice = "They are trying to scare you. Real police don't call to threaten arrest. Hang up immediately."
+    elif "computer" in text or "virus" in text or "microsoft" in text:
+        advice = "Tech support scam detected. Never give them remote access to your computer. Hang up."
+        
+    return {"advice": advice}

@@ -110,7 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       final data = await ApiService.enrollVoice(
-        audioFile: File(_recordPath!),
+        audioPath: _recordPath,
         contactName: _nameController.text.trim(),
         relationship: _relationController.text.trim().isEmpty ? null : _relationController.text.trim(),
       );

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -42,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _liveTranscript = '';
   double _liveScore = 0.0;
   bool _wsFallback = false;
+  String? _coachingAdvice;
   
   String? _recordingPath;
   final TextEditingController _callerController = TextEditingController();
@@ -108,6 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _liveTranscript = '';
       _liveScore = 0.0;
       _wsFallback = false;
+      _coachingAdvice = null;
     });
 
     final permission = await Permission.microphone.request();
@@ -134,6 +137,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 _liveTranscript = data['transcript'] ?? '';
                 _liveScore = (data['score'] ?? 0).toDouble();
               });
+              
+              if (_liveTranscript.isNotEmpty) {
+                ApiService.getCoachingAdvice(_liveTranscript).then((advice) {
+                  if (mounted && advice != null) {
+                    setState(() => _coachingAdvice = advice);
+                  }
+                });
+              }
             } catch (_) {}
           }
         },
@@ -194,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _writeWavFile(File file, List<int> pcmBytes, int sampleRate, int channels) async {
+  Uint8List _createWavBytes(List<int> pcmBytes, int sampleRate, int channels) {
     final byteData = ByteData(44 + pcmBytes.length);
     // "RIFF"
     byteData.setUint8(0, 82); byteData.setUint8(1, 73); byteData.setUint8(2, 70); byteData.setUint8(3, 70);
@@ -219,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
       byteData.setUint8(44 + i, pcmBytes[i]);
     }
     
-    await file.writeAsBytes(byteData.buffer.asUint8List());
+    return byteData.buffer.asUint8List();
   }
 
   Future<void> _stopRecording() async {
@@ -236,20 +247,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     
     if (_pcmBuffer.isNotEmpty) {
-      final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/recording_${DateTime.now().millisecondsSinceEpoch}.wav';
-      final file = File(path);
-      await _writeWavFile(file, _pcmBuffer, 16000, 1);
-      await _submitAudio(file, isDemo: false);
+      final wavBytes = kIsWeb ? Uint8List.fromList(_pcmBuffer) : _createWavBytes(_pcmBuffer, 16000, 1);
+      await _submitAudio(audioBytes: wavBytes, isDemo: false);
     }
   }
 
-  Future<void> _submitAudio(File audioFile, {required bool isDemo}) async {
+  Future<void> _submitAudio({List<int>? audioBytes, required bool isDemo}) async {
     setState(() => _state = RecordState.analyzing);
 
     try {
       final result = await ApiService.analyzeAudio(
-        audioFile: audioFile,
+        audioBytes: audioBytes,
         callerNumber: _callerController.text.trim().isEmpty ? null : _callerController.text.trim(),
         contactName: _contactController.text.trim().isEmpty ? null : _contactController.text.trim(),
         isDemo: isDemo,
@@ -274,10 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _useDemo() async {
-    // Create tiny placeholder file
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/demo.webm')..writeAsBytesSync([]);
-    await _submitAudio(file, isDemo: true);
+    await _submitAudio(audioBytes: [], isDemo: true);
   }
 
   @override
@@ -336,7 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Text('📊', style: TextStyle(fontSize: 20)),
+                      const Icon(Icons.bar_chart, size: 24, color: Colors.blueAccent),
                       const SizedBox(width: 10),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -346,7 +351,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             style: AppTypography.label(context, color: AppColors.antiqueGold),
                           ),
                           Text(
-                            '${summary.$1} calls analyzed${summary.$2 > 0 ? " · ${summary.$2} high-risk 🚨" : ""}',
+                            '${summary.$1} calls analyzed${summary.$2 > 0 ? " · ${summary.$2} high-risk" : ""}',
                             style: AppTypography.body(context),
                           ),
                         ],
@@ -397,7 +402,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: AppTypography.body(context, color: AppColors.ivory),
                   decoration: const InputDecoration(
                     labelText: 'Caller number (optional)',
-                    prefixText: '📞 ',
+                    prefixIcon: const Icon(Icons.phone, size: 20, color: Colors.white54),
                   ),
                   onChanged: (v) {
                     if (v.length >= 7) _checkNumber(v);
@@ -413,7 +418,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       border: Border.all(color: AppColors.deepCrimson.withOpacity(0.4)),
                     ),
                     child: Text(
-                      '⚠️ Reported by ${_numberCheckResult!['report_count']} users as scam',
+                      'Reported by ${_numberCheckResult!['report_count']} users as scam',
                       style: AppTypography.body(context, color: AppColors.crimsonLight),
                     ),
                   ),
@@ -466,9 +471,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ],
                               ),
                               child: Center(
-                                child: Text(
-                                  isRecording ? '⏹' : isAnalyzing ? '⏳' : '🎙️',
-                                  style: TextStyle(fontSize: simpleMode ? 38 : 32),
+                                child: Icon(
+                                  isRecording ? Icons.stop : isAnalyzing ? Icons.hourglass_empty : Icons.mic,
+                                  size: simpleMode ? 38 : 32,
+                                  color: Colors.white,
                                 ),
                               ),
                             ),
@@ -508,6 +514,30 @@ class _HomeScreenState extends State<HomeScreen> {
                                   Padding(
                                     padding: const EdgeInsets.only(top: 8.0),
                                     child: Text('"${_liveTranscript.length > 50 ? _liveTranscript.substring(_liveTranscript.length - 50) : _liveTranscript}..."', style: AppTypography.label(context, color: AppColors.textMuted), textAlign: TextAlign.center),
+                                  ),
+                                if (_coachingAdvice != null)
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 12.0),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.deepEmerald.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: AppColors.deepEmerald.withOpacity(0.4)),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Icon(Icons.support_agent, color: AppColors.emeraldLight, size: 16),
+                                            const SizedBox(width: 4),
+                                            Text('AI Coach Advice', style: AppTypography.label(context, color: AppColors.emeraldLight)),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(_coachingAdvice!, style: AppTypography.body(context, color: AppColors.ivory), textAlign: TextAlign.center),
+                                      ],
+                                    ),
                                   )
                               ],
                             )
@@ -581,7 +611,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // Demo button
               OutlinedButton(
                 onPressed: (isAnalyzing || isRecording) ? null : _useDemo,
-                child: const Text('🎭 Use Sample Scam Call Instead'),
+                child: const Text('Use Sample Scam Call Instead'),
               ),
               if (!simpleMode) ...[
                 const SizedBox(height: 6),
@@ -589,6 +619,56 @@ class _HomeScreenState extends State<HomeScreen> {
                   'Guaranteed demo — works without mic or network',
                   style: AppTypography.label(context),
                   textAlign: TextAlign.center,
+                ),
+                
+                const SizedBox(height: 32),
+                const Divider(color: AppColors.divider),
+                const SizedBox(height: 16),
+                
+                Text(
+                  'Advanced Features',
+                  style: AppTypography.heading2(context),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                
+                ListTile(
+                  leading: const Icon(Icons.record_voice_over, color: AppColors.antiqueGold),
+                  title: Text('Voice Biometrics Registration', style: AppTypography.body(context, color: AppColors.ivory)),
+                  subtitle: Text('Protect loved ones from AI clones', style: AppTypography.label(context, color: AppColors.textMuted)),
+                  trailing: const Icon(Icons.chevron_right, color: AppColors.antiqueGold),
+                  onTap: () => context.push('/enroll-voice'),
+                  tileColor: AppColors.navyLight,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: AppColors.antiqueGold.withOpacity(0.2)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.security, color: AppColors.antiqueGold),
+                  title: Text('Caller Intelligence Network', style: AppTypography.body(context, color: AppColors.ivory)),
+                  subtitle: Text('Search and report scam numbers', style: AppTypography.label(context, color: AppColors.textMuted)),
+                  trailing: const Icon(Icons.chevron_right, color: AppColors.antiqueGold),
+                  onTap: () => context.push('/caller-lookup'),
+                  tileColor: AppColors.navyLight,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: AppColors.antiqueGold.withOpacity(0.2)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.emergency, color: AppColors.deepCrimson),
+                  title: Text('Emergency & SOS', style: AppTypography.body(context, color: AppColors.ivory)),
+                  subtitle: Text('Quick access to emergency contacts', style: AppTypography.label(context, color: AppColors.textMuted)),
+                  trailing: const Icon(Icons.chevron_right, color: AppColors.antiqueGold),
+                  onTap: () => context.push('/emergency-contacts'),
+                  tileColor: AppColors.navyLight,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: AppColors.antiqueGold.withOpacity(0.2)),
+                  ),
                 ),
               ],
             ],
